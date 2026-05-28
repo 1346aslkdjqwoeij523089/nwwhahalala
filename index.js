@@ -98,6 +98,8 @@ async function updateChannelNameEnlisted() {
 }
 
 async function postNewMemberMessage() {
+  // no-op
+
   const channel = await client.channels.fetch(NEW_MEMBER_ANNOUNCE_CHANNEL_ID);
   if (!channel || !channel.send) return;
 
@@ -145,6 +147,9 @@ async function postNewMemberMessage() {
 }
 
 client.once('clientReady', async () => {
+  // Update immediately on startup
+  await updateChannelNameMembers().catch(e => console.error('Immediate 10min channel update failed:', e));
+  await updateChannelNameEnlisted().catch(e => console.error('Immediate 1h channel update failed:', e));
   // Presence: Watching over NWW | {ROLE_MEMBERSHIP_COUNT_ID Members}
   try {
     const count = await getRoleMemberCount(GUILD_ID, ROLE_MEMBERSHIP_COUNT_ID);
@@ -172,6 +177,23 @@ client.once('clientReady', async () => {
     await updateChannelNameEnlisted();
   } catch (e) {
     console.error('Failed to update 1h channel name on startup:', e);
+  }
+});
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'update-statistics') return;
+
+    await updateChannelNameMembers();
+    await updateChannelNameEnlisted();
+
+    await interaction.reply({ content: 'Statistics updated.', ephemeral: true });
+  } catch (e) {
+    console.error('Failed /update-statistics:', e);
+    try {
+      await interaction.reply({ content: 'Failed to update statistics.', ephemeral: true });
+    } catch {}
   }
 });
 
