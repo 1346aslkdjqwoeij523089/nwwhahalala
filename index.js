@@ -310,8 +310,19 @@ const COMMAND_LOG_CHANNEL_ID = '1509676249977454694';
 const ADMIN_PERMS = ['Administrator', 'KickMembers', 'BanMembers'];
 
 function hasAdminPerms(member) {
-  if (!member?.permissions) return false;
-  return ADMIN_PERMS.some(p => member.permissions.has(p));
+  // On message commands, permissions may be absent unless guildMember is resolved.
+  // Use permissions from the member object directly.
+  if (!member) return false;
+
+  // discord.js v14 uses PermissionsBitField; member.permissions can be null if partials.
+  const perms = member.permissions;
+  if (!perms) return false;
+
+  // Administrator implies all.
+  if (perms.has('Administrator')) return true;
+
+  // Otherwise require kick/ban capability.
+  return ADMIN_PERMS.some(p => p !== 'Administrator' && perms.has(p));
 }
 
 function highestRoleBelow(bannedTarget, executor) {
@@ -491,6 +502,23 @@ client.on('messageCreate', async (message) => {
       const textAfterMention = rest.join(' ');
       const tokens = textAfterMention.trim().split(/\s+/).filter(Boolean);
       if (!tokens.length) return await message.reply('Please provide a reason.');
+
+      // Ensure member object has up-to-date roles/permissions.
+      const executorMember = message.member;
+      const resolvedExecutor = await message.guild.members.fetch(executorMember.id).catch(() => executorMember);
+      const resolvedTarget = await message.guild.members.fetch(target.id).catch(() => target);
+
+      // Re-check hierarchy with resolved members.
+      if (!highestRoleBelow(resolvedTarget, resolvedExecutor)) {
+        const embed = formatCommandEmbed({
+          title: `Command: +${cmd}`,
+          actorTag: message.author.tag,
+          bullets: ['target has equal/higher role than executor (blocked)'],
+          timestamp: new Date()
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
 
       let timeMinutes;
       const last = tokens[tokens.length - 1];
