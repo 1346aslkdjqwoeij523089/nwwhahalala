@@ -6,7 +6,8 @@ services:
     runtime: node
     region: oregon
     branch: main
-    healthCheckPath: /
+    # Discord bots need a lightweight HTTP endpoint so Render/UptimeRobot can check health.
+    healthCheckPath: /healthz
     buildCommand: npm install
     startCommand: npm start
     autoDeploy: true
@@ -15,4 +16,5 @@ services:
         value: production
       - key: TOKEN
         sync: false
+
 
