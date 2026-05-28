@@ -3,7 +3,9 @@ const {
   GatewayIntentBits,
   Partials,
   ActivityType,
-  EmbedBuilder
+  EmbedBuilder,
+  REST,
+  Routes
 } = require('discord.js');
 
 // ====== Config (hardcoded per instructions) ======
@@ -19,6 +21,7 @@ const UPDATE_1H_CHANNEL_ID = '1508580825845993693';
 const NEW_MEMBER_ANNOUNCE_CHANNEL_ID = '1485535519625445396';
 
 // Presence line role count uses ROLE_MEMBERSHIP_COUNT_ID
+// Activity format is fixed by requirement; no dynamic presence string constant needed.
 const PRESENCE_FORMAT = 'Watching over';
 
 // New member message content (literal)
@@ -147,6 +150,28 @@ async function postNewMemberMessage() {
 }
 
 client.once('clientReady', async () => {
+  // Register slash commands (guild-scoped) so /update-statistics appears in Discord.
+  try {
+    const token = process.env.TOKEN;
+    const rest = new REST({ version: '10' }).setToken(token);
+
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+      {
+        body: [
+          {
+            name: 'update-statistics',
+            description: 'Updates member/enlisted channel statistics now.'
+          }
+        ]
+      }
+    );
+
+    console.log('[NWW] Slash command /update-statistics registered.');
+  } catch (e) {
+    console.error('[NWW] Failed to register slash commands:', e);
+  }
+
   // Update immediately on startup
   await updateChannelNameMembers().catch(e => console.error('Immediate 10min channel update failed:', e));
   await updateChannelNameEnlisted().catch(e => console.error('Immediate 1h channel update failed:', e));
