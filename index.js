@@ -305,6 +305,255 @@ server.listen(port, () => {
   console.log(`Health server listening on ${port}`);
 });
 
+// ===== Prefix + Commands ( + ) =====
+const COMMAND_LOG_CHANNEL_ID = '1509676249977454694';
+const ADMIN_PERMS = ['Administrator', 'KickMembers', 'BanMembers'];
+
+function hasAdminPerms(member) {
+  if (!member?.permissions) return false;
+  return ADMIN_PERMS.some(p => member.permissions.has(p));
+}
+
+function highestRoleBelow(bannedTarget, executor) {
+  const executorTop = executor.roles.highest;
+  const targetTop = bannedTarget.roles.highest;
+  return targetTop.position < executorTop.position;
+}
+
+function formatCommandEmbed({ title, actorTag, bullets, timestamp }) {
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(title)
+    .setDescription(
+      `> "${actorTag}"\n${bullets
+        .map(b => `> - ${b}`)
+        .join('\n')}
+`
+    )
+    .setTimestamp(timestamp || new Date());
+  return embed;
+}
+
+async function logCommandUsage(guild, embed) {
+  try {
+    const ch = await client.channels.fetch(COMMAND_LOG_CHANNEL_ID);
+    if (!ch?.send) return;
+    await ch.send({ embeds: [embed] });
+  } catch (e) {
+    console.error('Failed logging command usage:', e);
+  }
+}
+
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message.guild) return;
+    if (message.author.bot) return;
+
+    const content = (message.content || '').trim();
+    if (!content.startsWith('+')) return;
+
+    const [rawCmd, ...rest] = content.slice(1).split(/\s+/);
+    const cmd = (rawCmd || '').toLowerCase();
+
+    // Helper: count role members accurately
+    const roleCount = async (roleId) => getRoleMemberCount(GUILD_ID, roleId);
+
+    const isAdmin = hasAdminPerms(message.member);
+
+    if (cmd === 'updatestatistics') {
+      if (!isAdmin) {
+        const embed = formatCommandEmbed({
+          title: 'Command: +updatestatistics',
+          actorTag: message.author.tag,
+          bullets: ['denied (missing admin perms)'],
+          timestamp: new Date()
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
+
+      await updateChannelNameMembers();
+      await updateChannelNameEnlisted();
+
+      const embed = formatCommandEmbed({
+        title: 'Command: +updatestatistics',
+        actorTag: message.author.tag,
+        bullets: [
+          `updated channel ${UPDATE_10MIN_CHANNEL_ID} name`,
+          `updated channel ${UPDATE_1H_CHANNEL_ID} name`
+        ],
+        timestamp: new Date()
+      });
+
+      await logCommandUsage(message.guild, embed);
+      // Keep command execution confirmations private for non-public commands.
+      return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+    }
+
+    if (cmd === 'personcount') {
+      // Public view required: message should be sent in channel.
+      // The embed response itself should still not reveal who ran it? Requirement says command works public view rather than private.
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const members = await guild.members.fetch();
+      const nonBots = members.filter(m => !m.user.bot);
+
+      let online = 0;
+      nonBots.forEach(m => {
+        const status = m.presence?.status;
+        if (!status) return;
+        if (status !== 'invisible') online += 1;
+      });
+
+      const boosters = await guild.fetchBoosts?.();
+      const boosterCount = boosters && typeof boosters.size === 'number' ? boosters.size : 0;
+
+      const embed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle('Command: +personcount')
+        .setDescription(
+          `**${guild.name}**\n> **Member Count:** ${nonBots.size}\n> **Online Members:** ${online}\n> **Server Boosters:** ${boosterCount}`
+        )
+        .setTimestamp(new Date());
+
+      const logEmbed = formatCommandEmbed({
+        title: 'Command: +personcount',
+        actorTag: message.author.tag,
+        bullets: [`publicly displayed member statistics`],
+        timestamp: new Date()
+      });
+      await logCommandUsage(message.guild, logEmbed);
+
+      return await message.channel.send({ embeds: [embed] });
+    }
+
+    if (cmd === 'say') {
+      // Admin-only; public message output, but command usage confirmation is private.
+      if (!isAdmin) {
+        const embed = formatCommandEmbed({
+          title: 'Command: +say',
+          actorTag: message.author.tag,
+          bullets: ['denied (missing admin perms)'],
+          timestamp: new Date()
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
+
+      const sayText = rest.join(' ').trim();
+      if (!sayText) return await message.reply('Usage: +say <message>');
+
+      // Publicly send message
+      await message.channel.send(sayText);
+
+      const embed = formatCommandEmbed({
+        title: 'Command: +say',
+        actorTag: message.author.tag,
+        bullets: [`sent a public message`],
+        timestamp: new Date()
+      });
+      await logCommandUsage(message.guild, embed);
+
+      // Private confirmation (reply is private-ish if used as reply; best-effort)
+      return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+    }
+
+    if (cmd === 'kick' || cmd === 'ban') {
+      if (!isAdmin) {
+        const embed = formatCommandEmbed({
+          title: `Command: +${cmd}`,
+          actorTag: message.author.tag,
+          bullets: ['denied (missing admin perms)'],
+          timestamp: new Date()
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
+
+      // Parse: +kick @user <reason...>
+      // +ban @user <reason...> [time]
+      // If time provided: treat last token as number of minutes for softban
+      const target = message.mentions.members.first();
+      if (!target) return await message.reply('Usage: +kick/+ban @user <reason> [time minutes]');
+
+      // Role hierarchy check
+      if (!highestRoleBelow(target, message.member)) {
+        const embed = formatCommandEmbed({
+          title: `Command: +${cmd}`,
+          actorTag: message.author.tag,
+          bullets: ['target has equal/higher role than executor (blocked)'],
+          timestamp: new Date()
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
+
+      // Extract reason/time from the message
+      const textAfterMention = rest.join(' ');
+      const tokens = textAfterMention.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) return await message.reply('Please provide a reason.');
+
+      let timeMinutes;
+      const last = tokens[tokens.length - 1];
+      if (/^\d+$/.test(last)) {
+        timeMinutes = parseInt(last, 10);
+        tokens.pop();
+      }
+      const reason = tokens.join(' ');
+
+      const now = new Date();
+
+      if (cmd === 'kick') {
+        await target.kick(reason);
+
+        const embed = formatCommandEmbed({
+          title: 'Command: +kick',
+          actorTag: message.author.tag,
+          bullets: [`kicked ${target.user.tag}`, `reason: ${reason}`],
+          timestamp: now
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
+
+      if (cmd === 'ban') {
+        if (timeMinutes && timeMinutes > 0) {
+          // softban: ban then unban after time
+          await target.ban({ reason });
+          setTimeout(async () => {
+            try {
+              await message.guild.members.unban(target.id, 'softban duration ended');
+            } catch (e) {
+              console.error('Softban unban failed:', e);
+            }
+          }, timeMinutes * 60 * 1000);
+
+          const embed = formatCommandEmbed({
+            title: 'Command: +ban (softban)',
+            actorTag: message.author.tag,
+            bullets: [`softbanned ${target.user.tag}`, `reason: ${reason}`, `duration: ${timeMinutes} minutes`],
+            timestamp: now
+          });
+          await logCommandUsage(message.guild, embed);
+          return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+        }
+
+        await target.ban({ reason });
+        const embed = formatCommandEmbed({
+          title: 'Command: +ban',
+          actorTag: message.author.tag,
+          bullets: [`banned ${target.user.tag}`, `reason: ${reason}`],
+          timestamp: now
+        });
+        await logCommandUsage(message.guild, embed);
+        return await message.reply({ embeds: [embed], allowedMentions: { repliedUser: false } });
+      }
+    }
+  } catch (e) {
+    console.error('messageCreate handler error:', e);
+  }
+});
+
 client.login(process.env.TOKEN);
+
 
 
