@@ -1,1 +1,18 @@
+services:
+  - type: web
+    name: nww-discord-bot
+    env: node
+    plan: free
+    runtime: node
+    region: oregon
+    branch: main
+    healthCheckPath: /
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TOKEN
+        sync: false
 
