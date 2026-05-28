@@ -16,5 +16,10 @@ services:
         value: production
       - key: TOKEN
         sync: false
+      - key: MONGODB_URI
+        sync: false
+
+
+
 
 
