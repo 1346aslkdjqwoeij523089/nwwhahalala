@@ -8,6 +8,8 @@ const {
   Routes
 } = require('discord.js');
 
+const { MongoClient } = require('mongodb');
+
 // ====== Config (hardcoded per instructions) ======
 const GUILD_ID = '1453748039448789189';
 
@@ -369,7 +371,7 @@ client.on('messageCreate', async (message) => {
     // Helper: count role members accurately
     const roleCount = async (roleId) => getRoleMemberCount(GUILD_ID, roleId);
 
-    const isAdmin = hasAdminPerms(message.member);
+    const isAdmin = hasAdminPerms(message.member) || (message.member?.permissions && message.member.permissions.has('Administrator'));
 
     if (cmd === 'updatestatistics') {
       if (!isAdmin) {
@@ -581,7 +583,51 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-client.login(process.env.TOKEN);
+async function startMongoAndRun() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.warn('[NWW] MONGODB_URI not set. Continuing without MongoDB-backed config.');
+  } else {
+    const mongo = new MongoClient(uri);
+    try {
+      await mongo.connect();
+      console.log('[NWW] MongoDB connected');
+      const db = mongo.db('nwwworkplace');
+
+      // Seed default guild config so we can later drive channel/role IDs from DB.
+      const configs = db.collection('guildConfigs');
+      await configs.updateOne(
+        { guildId: GUILD_ID },
+        {
+          $setOnInsert: {
+            guildId: GUILD_ID,
+            channels: {
+              update10minId: UPDATE_10MIN_CHANNEL_ID,
+              update1hId: UPDATE_1H_CHANNEL_ID,
+              newMemberAnnounceId: NEW_MEMBER_ANNOUNCE_CHANNEL_ID
+            },
+            roles: {
+              membershipCountId: ROLE_MEMBERSHIP_COUNT_ID,
+              enlistedCountId: ROLE_ENLISTED_COUNT_ID
+            }
+          }
+        },
+        { upsert: true }
+      );
+
+      console.log('[NWW] MongoDB ready (seeded guild config).');
+
+    } catch (e) {
+      console.error('[NWW] MongoDB connection failed:', e);
+    }
+  }
+
+  client.login(process.env.TOKEN);
+}
+
+startMongoAndRun();
+
+
 
 
 
