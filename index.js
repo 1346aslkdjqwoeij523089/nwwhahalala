@@ -204,5 +204,23 @@ setInterval(async () => {
   }
 }, 10 * 60 * 1000);
 
+// Render requires at least one open HTTP port for web services.
+// Provide a minimal server so UptimeRobot can ping /healthz.
+const http = require('http');
+const port = process.env.PORT || 10000;
+const server = http.createServer((req, res) => {
+  if (req.url === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('ok');
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.end('not found');
+});
+server.listen(port, () => {
+  console.log(`Health server listening on ${port}`);
+});
+
 client.login(process.env.TOKEN);
+
 
