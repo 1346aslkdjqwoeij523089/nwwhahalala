@@ -54,20 +54,25 @@ async function getGuild(guildId) {
 async function getRoleMemberCount(guildId, roleId) {
   const guild = await getGuild(guildId);
 
-  // Ensure members are available; if the guild is large, this can be heavy,
-  // but it is the most reliable approach for counting role members.
-  // For most bots, this requires GuildMembers intent.
-  // If members are already cached, this is cheap.
-if (!guild.members.cache.size) {
+  // Ensure members are available; fetch all members once so role caches are populated.
+  // This is necessary because channel-name correctness depends on accurate role membership counts.
+  if (!guild.members.cache || guild.members.cache.size === 0) {
     await guild.members.fetch({ withPresences: false });
   }
 
-  const count = guild.members.cache.filter(m => m.roles.cache.has(roleId)).size;
+  // Count directly from fetched member roles cache.
+  const count = guild.members.cache.reduce((acc, member) => {
+    return acc + (member.roles.cache.has(roleId) ? 1 : 0);
+  }, 0);
+
   return safeInt(count);
 }
 
 async function updateChannelNameMembers() {
   const count = await getRoleMemberCount(GUILD_ID, ROLE_MEMBERSHIP_COUNT_ID);
+
+  // Helpful logs (you can view Render logs to confirm the count is correct)
+  console.log(`[NWW] Members role count for ${ROLE_MEMBERSHIP_COUNT_ID}: ${count}`);
 
   const channel = await client.channels.fetch(UPDATE_10MIN_CHANNEL_ID);
   if (!channel || !channel.edit) return;
@@ -80,6 +85,8 @@ async function updateChannelNameMembers() {
 
 async function updateChannelNameEnlisted() {
   const count = await getRoleMemberCount(GUILD_ID, ROLE_ENLISTED_COUNT_ID);
+
+  console.log(`[NWW] Enlisted role count for ${ROLE_ENLISTED_COUNT_ID}: ${count}`);
 
   const channel = await client.channels.fetch(UPDATE_1H_CHANNEL_ID);
   if (!channel || !channel.edit) return;
