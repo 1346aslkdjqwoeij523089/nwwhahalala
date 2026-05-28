@@ -58,8 +58,8 @@ async function getRoleMemberCount(guildId, roleId) {
   // but it is the most reliable approach for counting role members.
   // For most bots, this requires GuildMembers intent.
   // If members are already cached, this is cheap.
-  if (!guild.members.cache.size) {
-    await guild.members.fetch();
+if (!guild.members.cache.size) {
+    await guild.members.fetch({ withPresences: false });
   }
 
   const count = guild.members.cache.filter(m => m.roles.cache.has(roleId)).size;
@@ -137,7 +137,7 @@ async function postNewMemberMessage() {
   });
 }
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   // Presence: Watching over NWW | {ROLE_MEMBERSHIP_COUNT_ID Members}
   try {
     const count = await getRoleMemberCount(GUILD_ID, ROLE_MEMBERSHIP_COUNT_ID);
