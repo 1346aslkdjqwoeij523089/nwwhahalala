@@ -57,16 +57,13 @@ async function getGuild(guildId) {
 async function getRoleMemberCount(guildId, roleId) {
   const guild = await getGuild(guildId);
 
-  // Ensure members are available; fetch all members once so role caches are populated.
-  // This is necessary because channel-name correctness depends on accurate role membership counts.
-  if (!guild.members.cache || guild.members.cache.size === 0) {
-    await guild.members.fetch({ withPresences: false });
-  }
+  // Always fetch fresh member list to avoid stale/partial caches that can produce 0/1.
+  const members = await guild.members.fetch({ withPresences: false });
 
-  // Count directly from fetched member roles cache.
-  const count = guild.members.cache.reduce((acc, member) => {
-    return acc + (member.roles.cache.has(roleId) ? 1 : 0);
-  }, 0);
+  let count = 0;
+  members.forEach(m => {
+    if (m.roles.cache.has(roleId)) count += 1;
+  });
 
   return safeInt(count);
 }
@@ -162,6 +159,10 @@ client.once('clientReady', async () => {
           {
             name: 'update-statistics',
             description: 'Updates member/enlisted channel statistics now.'
+          },
+          {
+            name: 'personcount',
+            description: 'Shows NWW server member statistics.'
           }
         ]
       }
@@ -208,16 +209,45 @@ client.once('clientReady', async () => {
 client.on('interactionCreate', async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName !== 'update-statistics') return;
 
-    await updateChannelNameMembers();
-    await updateChannelNameEnlisted();
+    if (interaction.commandName === 'update-statistics') {
+      await updateChannelNameMembers();
+      await updateChannelNameEnlisted();
+      return await interaction.reply({ content: 'Statistics updated.', ephemeral: true });
+    }
 
-    await interaction.reply({ content: 'Statistics updated.', ephemeral: true });
+    if (interaction.commandName === 'personcount') {
+      const guild = await client.guilds.fetch(GUILD_ID);
+
+      // Member count: non-bots
+      const members = await guild.members.fetch();
+      const nonBots = members.filter(m => !m.user.bot);
+
+      // Online members: non-bots with status != invisible
+      // discord.js uses PresenceStatus values; however, some members may not have presence cached.
+      // We'll treat undefined as not-online.
+      let online = 0;
+      nonBots.forEach(m => {
+        const status = m.presence?.status;
+        if (!status) return;
+        if (status !== 'invisible') online += 1;
+      });
+
+      const boosters = await guild.fetchBoosts?.();
+      const boosterCount = boosters && typeof boosters.size === 'number' ? boosters.size : 0;
+
+      const embed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setDescription(
+          `**${guild.name}**\n> **Member Count:** ${nonBots.size}\n> **Online Members:** ${online}\n> **Server Boosters:** ${boosterCount}`
+        );
+
+      return await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
   } catch (e) {
-    console.error('Failed /update-statistics:', e);
+    console.error('Command handler error:', e);
     try {
-      await interaction.reply({ content: 'Failed to update statistics.', ephemeral: true });
+      await interaction.reply({ content: 'Command failed.', ephemeral: true });
     } catch {}
   }
 });
