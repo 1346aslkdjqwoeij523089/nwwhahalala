@@ -148,10 +148,10 @@ async function postNewMemberMessage() {
   });
 }
 
-async function registerSlashCommands() {
+function registerSlashCommands() {
   try {
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-    await rest.put(
+    return rest.put(
       Routes.applicationGuildCommands(client.user.id, GUILD_ID),
       {
         body: [
@@ -204,8 +204,6 @@ async function registerSlashCommands() {
         ]
       }
     );
-
-    console.log('[NWW] Slash commands registered.');
   } catch (e) {
     console.error('[NWW] Failed registering slash commands:', e);
   }
@@ -244,70 +242,22 @@ client.once('clientReady', async () => {
   } catch (e) {
     console.error('Failed to update 1h channel name on startup:', e);
   }
-  return;
-
-  // ====== OLD LOGIC BELOW (kept only for context; will be removed by next edit) ======
-
-  // Register slash commands (guild-scoped) so /update-statistics appears in Discord.
-  try {
-    const token = process.env.TOKEN;
-    const rest = new REST({ version: '10' }).setToken(token);
-
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-      {
-        body: [
-          {
-            name: 'update-statistics',
-            description: 'Updates member/enlisted channel statistics now.'
-          },
-          {
-            name: 'personcount',
-            description: 'Shows NWW server member statistics.'
-          }
-        ]
-      }
-    );
-
-    console.log('[NWW] Slash command /update-statistics registered.');
-  } catch (e) {
-    console.error('[NWW] Failed to register slash commands:', e);
-  }
-
-  // Update immediately on startup
-  await updateChannelNameMembers().catch(e => console.error('Immediate 10min channel update failed:', e));
-  await updateChannelNameEnlisted().catch(e => console.error('Immediate 1h channel update failed:', e));
-  // Presence: Watching over NWW | {ROLE_MEMBERSHIP_COUNT_ID Members}
-  try {
-    const count = await getRoleMemberCount(GUILD_ID, ROLE_MEMBERSHIP_COUNT_ID);
-
-    client.user.setPresence({
-      activities: [
-        {
-          name: `NWW | ${count} Members`,
-          type: ActivityType.Watching
-        }
-      ],
-      status: 'online'
-    });
-  } catch (e) {
-    console.error('Failed to set initial presence:', e);
-  }
-
-  // Update channels on startup
-  try {
-    await updateChannelNameMembers();
-  } catch (e) {
-    console.error('Failed to update 10min channel name on startup:', e);
-  }
-  try {
-    await updateChannelNameEnlisted();
-  } catch (e) {
-    console.error('Failed to update 1h channel name on startup:', e);
-  }
 });
 
 client.on('interactionCreate', async (interaction) => {
+  // Strict channel gating for ALL slash commands
+  try {
+    if (interaction.guild && !interaction.isChatInputCommand()) {
+      return;
+    }
+  } catch {}
+  if (interaction.guild) {
+    const member = interaction.member;
+    const channelId = interaction.channelId;
+    if (!isCommandChannelAllowed(interaction, channelId, member)) {
+      return interaction.reply({ content: 'Command not allowed in this channel.', ephemeral: true });
+    }
+  }
   try {
     if (!interaction.isChatInputCommand()) return;
 
@@ -407,7 +357,40 @@ server.listen(port, () => {
 });
 
 // ===== Prefix + Commands ( + ) =====
-const COMMAND_LOG_CHANNEL_ID = '1509676249977454694';
+const COMMAND_LOG_CHANNEL_ID = '1509698236770680924';
+
+// ===== Moderation gating + modlog channel requirements =====
+const ALLOWED_COMMAND_CHANNEL_IDS = new Set([
+  '1485532013665714336',
+  '1508571847229313234',
+  '1508784317445312623',
+  '1508589546206400572'
+]);
+
+// Users with these roles can run ANY command in ANY channel
+const MOD_ANYWHERE_ROLE_IDS = new Set([
+  '1454152713058123796'
+]);
+
+function isServerOwnerOrAdminAnywhere(member) {
+  if (!member) return false;
+  if (typeof member.roles?.cache?.some !== 'function') {
+    // fallback below
+  }
+  for (const role of member.roles.cache.values()) {
+    if (MOD_ANYWHERE_ROLE_IDS.has(role.id)) return true;
+  }
+  const perms = member.permissions;
+  if (perms?.has && perms.has('Administrator')) return true;
+  // Server owner/admin is usually reflected as Administrator permission.
+  return false;
+}
+
+function isCommandChannelAllowed(messageOrInteractionGuildMember, channelId, member) {
+  // if member can run anywhere, allow
+  if (isServerOwnerOrAdminAnywhere(member)) return true;
+  return ALLOWED_COMMAND_CHANNEL_IDS.has(channelId);
+}
 const ADMIN_PERMS = ['Administrator', 'KickMembers', 'BanMembers'];
 
 function hasAdminPerms(member) {
@@ -460,6 +443,13 @@ client.on('messageCreate', async (message) => {
   try {
     if (!message.guild) return;
     if (message.author.bot) return;
+
+    // Strict channel gating for ALL + commands
+    const member = message.member;
+    if (!isCommandChannelAllowed(message, message.channelId, member)) {
+      return;
+    }
+
 
     const content = (message.content || '').trim();
     if (!content.startsWith('+')) return;
