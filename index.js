@@ -148,7 +148,106 @@ async function postNewMemberMessage() {
   });
 }
 
-client.once('clientReady', async () => {
+async function registerSlashCommands() {
+  try {
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+      {
+        body: [
+          { name: 'update-statistics', description: 'Updates member/enlisted channel statistics now.' },
+          { name: 'personcount', description: 'Shows NWW server member statistics.' },
+
+          // Moderation
+          { name: 'warn', description: 'Warn a member', options: [
+            { name: 'user', type: 6, description: 'Member', required: true },
+            { name: 'reason', type: 3, description: 'Reason', required: true }
+          ]},
+          { name: 'timeout', description: 'Timeout a member', options: [
+            { name: 'user', type: 6, description: 'Member', required: true },
+            { name: 'duration', type: 3, description: 'Duration (max 4 weeks)', required: true },
+            { name: 'reason', type: 3, description: 'Reason', required: true }
+          ]},
+          { name: 'mute', description: 'Mute a member (timeout)', options: [
+            { name: 'user', type: 6, description: 'Member', required: true },
+            { name: 'duration', type: 3, description: 'Duration (max 4 weeks)', required: true },
+            { name: 'reason', type: 3, description: 'Reason', required: true }
+          ]},
+          { name: 'kick', description: 'Kick a member', options: [
+            { name: 'user', type: 6, description: 'Member', required: true },
+            { name: 'reason', type: 3, description: 'Reason', required: true }
+          ]},
+          { name: 'ban', description: 'Ban a member', options: [
+            { name: 'user', type: 6, description: 'Member', required: true },
+            { name: 'duration', type: 3, description: 'Duration (min 5s, max 4 weeks)', required: true },
+            { name: 'reason', type: 3, description: 'Reason', required: true }
+          ]},
+
+          // Case ops
+          { name: 'modlogs', description: 'Show moderation logs for a user', options: [
+            { name: 'user', type: 6, description: 'User', required: false }
+          ]},
+          { name: 'voidcase', description: 'Void/clear a case', options: [
+            { name: 'caseNumber', type: 4, description: 'Case number', required: true }
+          ]},
+          { name: 'editcase', description: 'Edit a case punishment type/reason', options: [
+            { name: 'caseNumber', type: 4, description: 'Case number', required: true },
+            { name: 'punishmentType', type: 3, description: 'Punishment type (optional)', required: false },
+            { name: 'reason', type: 3, description: 'New reason (optional)', required: false }
+          ]},
+          { name: 'reopencase', description: 'Reopen a voided case', options: [
+            { name: 'caseNumber', type: 4, description: 'Case number', required: true }
+          ]},
+          { name: 'deletecase', description: 'Delete a case permanently', options: [
+            { name: 'caseNumber', type: 4, description: 'Case number', required: true }
+          ]}
+        ]
+      }
+    );
+
+    console.log('[NWW] Slash commands registered.');
+  } catch (e) {
+    console.error('[NWW] Failed registering slash commands:', e);
+  }
+}
+
+client.once('clientReady', async () => { 
+  await registerSlashCommands();
+  // Update immediately on startup
+  await updateChannelNameMembers().catch(e => console.error('Immediate 10min channel update failed:', e));
+  await updateChannelNameEnlisted().catch(e => console.error('Immediate 1h channel update failed:', e));
+  // Presence: Watching over NWW | {ROLE_MEMBERSHIP_COUNT_ID Members}
+  try {
+    const count = await getRoleMemberCount(GUILD_ID, ROLE_MEMBERSHIP_COUNT_ID);
+
+    client.user.setPresence({
+      activities: [
+        {
+          name: `NWW | ${count} Members`,
+          type: ActivityType.Watching
+        }
+      ],
+      status: 'online'
+    });
+  } catch (e) {
+    console.error('Failed to set initial presence:', e);
+  }
+
+  // Update channels on startup
+  try {
+    await updateChannelNameMembers();
+  } catch (e) {
+    console.error('Failed to update 10min channel name on startup:', e);
+  }
+  try {
+    await updateChannelNameEnlisted();
+  } catch (e) {
+    console.error('Failed to update 1h channel name on startup:', e);
+  }
+  return;
+
+  // ====== OLD LOGIC BELOW (kept only for context; will be removed by next edit) ======
+
   // Register slash commands (guild-scoped) so /update-statistics appears in Discord.
   try {
     const token = process.env.TOKEN;
